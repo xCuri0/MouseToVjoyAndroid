@@ -228,7 +228,7 @@ public class MainActivity extends AppCompatActivity {
         thread2.start();
 
         pbuf.order(ByteOrder.LITTLE_ENDIAN);
-        pbuf.put((byte) 0); // length
+        pbuf.put((byte) -1); // length
         pbuf.rewind();
         pbuf.get(pbuffer);
 
