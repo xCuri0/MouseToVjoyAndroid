@@ -35,6 +35,7 @@ import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
+import java.net.SocketAddress;
 import java.net.SocketException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -63,10 +64,47 @@ public class MainActivity extends AppCompatActivity {
 
     SharedPreferences sharedPref;
 
+    private InetAddress getOutboundAddress(SocketAddress remoteAddress) throws SocketException {
+        DatagramSocket sock = new DatagramSocket();
+        // connect is needed to bind the socket and retrieve the local address
+        // later (it would return 0.0.0.0 otherwise)
+        sock.connect(remoteAddress);
+
+        final InetAddress localAddress = sock.getLocalAddress();
+
+        sock.disconnect();
+        sock.close();
+
+        return localAddress;
+    }
+
+    private static boolean isTetheringIP(InetAddress address){
+        try {
+            for (Enumeration<NetworkInterface> en = NetworkInterface.getNetworkInterfaces(); en.hasMoreElements(); ) {
+                NetworkInterface intf = en.nextElement();
+                for (Enumeration<InetAddress> enumIpAddr = intf.getInetAddresses(); enumIpAddr.hasMoreElements(); ) {
+                    InetAddress inetAddress = enumIpAddr.nextElement();
+                    if (!intf.isLoopback()) {
+                        if (intf.getName().contains("rndis")) {
+                            if (inetAddress.equals(address))
+                                return true;
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return false;
+    }
+
     private void serverLoop() throws IOException {
         DatagramPacket request = new DatagramPacket(new byte[1], 1);
         while (true) {
             socket.receive(request);
+
+            if (!isTetheringIP(getOutboundAddress(request.getSocketAddress())))
+                continue;
 
             cAddress = request.getAddress();
             cPort = request.getPort();
