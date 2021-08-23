@@ -208,70 +208,72 @@ public class MainActivity extends AppCompatActivity {
             msg.create().show();
         }
 
-        Thread thread = new Thread(() -> {
-            try {
-                serverLoop();
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
-        });
-        Thread thread2 = new Thread(() -> {
-            while (true) {
-                synchronized (buffer) {
-                    try {
-                        buffer.wait();
-                        DatagramPacket response = new DatagramPacket(buffer, buffer.length, cAddress, cPort);
-                        socket.send(response);
-                    } catch (IOException | InterruptedException e) {
-                        e.printStackTrace();
+        if (isTetheringActive()) {
+            Thread thread = new Thread(() -> {
+                try {
+                    serverLoop();
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            });
+            Thread thread2 = new Thread(() -> {
+                while (true) {
+                    synchronized (buffer) {
+                        try {
+                            buffer.wait();
+                            DatagramPacket response = new DatagramPacket(buffer, buffer.length, cAddress, cPort);
+                            socket.send(response);
+                        } catch (IOException | InterruptedException e) {
+                            e.printStackTrace();
+                        }
                     }
                 }
-            }
-        });
-        Runnable pinger = () -> {
-            if (cAddress == null) return;
+            });
+            Runnable pinger = () -> {
+                if (cAddress == null) return;
 
-            DatagramPacket response = new DatagramPacket(pbuffer, pbuffer.length, cAddress, cPort);
-            try {
-                socket.send(response);
-            } catch (IOException ioException) {
-                ioException.printStackTrace();
-            }
-        };
+                DatagramPacket response = new DatagramPacket(pbuffer, pbuffer.length, cAddress, cPort);
+                try {
+                    socket.send(response);
+                } catch (IOException ioException) {
+                    ioException.printStackTrace();
+                }
+            };
 
-        wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
-        perfLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF,"MouseToVjoyLockPerf");
+            wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+            perfLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "MouseToVjoyLockPerf");
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
-            latencyLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_LOW_LATENCY,"MouseToVjoyLockLatency");
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+                latencyLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_LOW_LATENCY, "MouseToVjoyLockLatency");
 
-        requestWindowFeature(Window.FEATURE_NO_TITLE);
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        setContentView(R.layout.activity_main);
-        Objects.requireNonNull(getSupportActionBar()).hide();
+            requestWindowFeature(Window.FEATURE_NO_TITLE);
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            setContentView(R.layout.activity_main);
+            Objects.requireNonNull(getSupportActionBar()).hide();
 
-        sharedPref = this.getPreferences(Context.MODE_PRIVATE);
-        byte[] ibytes = Base64.decode(sharedPref.getString("bg", "").getBytes(), Base64.DEFAULT);
+            sharedPref = this.getPreferences(Context.MODE_PRIVATE);
+            byte[] ibytes = Base64.decode(sharedPref.getString("bg", "").getBytes(), Base64.DEFAULT);
 
-        ((ImageView)findViewById(R.id.imageView)).setImageBitmap(BitmapFactory.decodeByteArray(ibytes, 0, ibytes.length));
+            ((ImageView) findViewById(R.id.imageView)).setImageBitmap(BitmapFactory.decodeByteArray(ibytes, 0, ibytes.length));
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT)
-            getWindow().getDecorView().setSystemUiVisibility(
-                    View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
-                            View.SYSTEM_UI_FLAG_FULLSCREEN |
-                            View.SYSTEM_UI_FLAG_LAYOUT_STABLE |
-                            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT)
+                getWindow().getDecorView().setSystemUiVisibility(
+                        View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
+                                View.SYSTEM_UI_FLAG_FULLSCREEN |
+                                View.SYSTEM_UI_FLAG_LAYOUT_STABLE |
+                                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
 
-        thread.start();
-        thread2.start();
+            thread.start();
+            thread2.start();
 
-        pbuf.order(ByteOrder.LITTLE_ENDIAN);
-        pbuf.put((byte) -1); // length
-        pbuf.rewind();
-        pbuf.get(pbuffer);
+            pbuf.order(ByteOrder.LITTLE_ENDIAN);
+            pbuf.put((byte) -1); // length
+            pbuf.rewind();
+            pbuf.get(pbuffer);
 
-        scheduler.scheduleAtFixedRate(pinger, 5, 5, TimeUnit.SECONDS);
+            scheduler.scheduleAtFixedRate(pinger, 5, 5, TimeUnit.SECONDS);
+        }
 
     }
 
