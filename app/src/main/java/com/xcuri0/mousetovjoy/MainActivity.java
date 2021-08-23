@@ -191,6 +191,23 @@ public class MainActivity extends AppCompatActivity {
             e.printStackTrace();
         }
 
+        if (!isTetheringActive()) {
+            AlertDialog.Builder msg = new AlertDialog.Builder(this);
+            msg.setMessage("Enable USB Tethering to continue");
+            msg.setTitle("MouseToVjoy");
+            msg.setPositiveButton("OK", null);
+            msg.setCancelable(true);
+            msg.setPositiveButton("Ok",
+                    (dialog, which) -> {
+                        startActivityForResult(new Intent(android.provider.Settings.ACTION_AIRPLANE_MODE_SETTINGS), 0);
+                        if (!isTetheringActive()) {
+                            this.finishAffinity();
+                        }
+                    });
+            msg.setOnDismissListener((dialog) -> this.finishAffinity());
+            msg.create().show();
+        }
+
         Thread thread = new Thread(() -> {
             try {
                 serverLoop();
@@ -246,22 +263,6 @@ public class MainActivity extends AppCompatActivity {
                             View.SYSTEM_UI_FLAG_LAYOUT_STABLE |
                             View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
 
-        if (!isTetheringActive()) {
-            AlertDialog.Builder msg = new AlertDialog.Builder(this);
-            msg.setMessage("Enable USB Tethering to continue");
-            msg.setTitle("MouseToVjoy");
-            msg.setPositiveButton("OK", null);
-            msg.setCancelable(true);
-            msg.setPositiveButton("Ok",
-                    (dialog, which) -> {
-                        startActivityForResult(new Intent(android.provider.Settings.ACTION_AIRPLANE_MODE_SETTINGS), 0);
-                        if (!isTetheringActive()) {
-                            this.finishAffinity();
-                        }
-                    });
-            msg.setOnDismissListener((dialog) -> this.finishAffinity());
-            msg.create().show();
-        }
         thread.start();
         thread2.start();
 
