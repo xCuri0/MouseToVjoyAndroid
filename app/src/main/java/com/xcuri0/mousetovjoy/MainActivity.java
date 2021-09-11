@@ -23,6 +23,7 @@ import android.provider.MediaStore;
 import android.util.Base64;
 import android.util.Log;
 import android.util.SparseArray;
+import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.Window;
@@ -354,6 +355,42 @@ public class MainActivity extends AppCompatActivity {
         }
 
         return true;
+    }
+
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        int btn = 0;
+        int action = event.getAction();
+        int keyCode = event.getKeyCode();
+        switch (keyCode) {
+            case KeyEvent.KEYCODE_VOLUME_UP: {
+                if (action == KeyEvent.ACTION_DOWN)
+                    btn = 1;
+                else
+                    btn = 3;
+                break;
+            }
+            case KeyEvent.KEYCODE_VOLUME_DOWN: {
+                if (action == KeyEvent.ACTION_DOWN)
+                    btn = 2;
+                else
+                    btn = 4;
+                break;
+            }
+        }
+        if (btn > 0 && cAddress != null) {
+            tbuf.position(0);
+            tbuf.put((byte) -2);
+            tbuf.putFloat(btn);
+            tbuf.rewind();
+            tbuf.get(buffer);
+
+            synchronized (buffer) {
+                buffer.notifyAll();
+            }
+            return true;
+        }
+        return super.dispatchKeyEvent(event);
     }
 
     @Override
