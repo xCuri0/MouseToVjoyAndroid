@@ -58,6 +58,7 @@ public class MainActivity extends AppCompatActivity {
     InetAddress cAddress;
     int cPort;
 
+    final char APP_VERSION = 2;
     int MAX_TOUCHES = 10;
     ByteBuffer tbuf;
     final byte[] buffer = new byte[1 + (MAX_TOUCHES * 8)];
@@ -115,6 +116,7 @@ public class MainActivity extends AppCompatActivity {
 
             tbuf.putInt(Resources.getSystem().getDisplayMetrics().heightPixels); // right
             tbuf.putInt(Resources.getSystem().getDisplayMetrics().widthPixels); // top
+            tbuf.put((byte) APP_VERSION);
             tbuf.put((Build.MANUFACTURER + " " + Build.MODEL).getBytes());
             tbuf.rewind();
             tbuf.get(buffer);
