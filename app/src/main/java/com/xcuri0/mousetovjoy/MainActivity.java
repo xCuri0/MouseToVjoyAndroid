@@ -2,20 +2,16 @@ package com.xcuri0.mousetovjoy;
 
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
-import androidx.constraintlayout.widget.ConstraintSet;
 
 import android.app.Activity;
 import android.content.Context;
-import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.SharedPreferences;
-import android.content.pm.ActivityInfo;
 import android.content.res.Resources;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.PointF;
-import android.net.Uri;
-import android.net.wifi.WifiManager;
+import android.net.TrafficStats;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.StrictMode;
@@ -29,7 +25,6 @@ import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
 import android.widget.ImageView;
-
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.net.DatagramPacket;
@@ -44,25 +39,24 @@ import java.util.Enumeration;
 import java.util.Objects;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.TimeUnit;
 
+import static android.os.Process.THREAD_PRIORITY_LOWEST;
+import static android.os.Process.THREAD_PRIORITY_URGENT_DISPLAY;
+import static android.os.Process.setThreadPriority;
 import static java.lang.Math.min;
 
 public class MainActivity extends AppCompatActivity {
-    WifiManager wm;
-    WifiManager.WifiLock perfLock;
-    WifiManager.WifiLock latencyLock;
+    final char APP_VERSION = 3;
 
     DatagramSocket socket;
     InetAddress cAddress;
     int cPort;
 
-    final char APP_VERSION = 2;
+    Boolean sending = false;
     int MAX_TOUCHES = 10;
-    ByteBuffer tbuf;
-    final byte[] buffer = new byte[1 + (MAX_TOUCHES * 8)];
-    SparseArray<PointF> pointers = new SparseArray<>();
+    ByteBuffer touchBBuffer = ByteBuffer.allocate(1 + (MAX_TOUCHES * 8));
+    final byte[] touchBuffer = new byte[1 + (MAX_TOUCHES * 8)];
+    SparseArray<PointF> touchPointers = new SparseArray<>();
 
     SharedPreferences sharedPref;
 
@@ -100,8 +94,41 @@ public class MainActivity extends AppCompatActivity {
         return false;
     }
 
+    private static boolean isTetheringActive(){
+        try {
+            for (Enumeration<NetworkInterface> en = NetworkInterface.getNetworkInterfaces(); en.hasMoreElements(); ) {
+                NetworkInterface intf = en.nextElement();
+                for (Enumeration<InetAddress> enumIpAddr = intf.getInetAddresses(); enumIpAddr.hasMoreElements(); ) {
+                    InetAddress inetAddress = enumIpAddr.nextElement();
+                    if (!intf.isLoopback()) {
+                        if (intf.getName().contains("rndis")) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return false;
+    }
+
     private void serverLoop() throws IOException {
+        byte[] sendBuffer = new byte[136];
+        ByteBuffer sendBBuffer = ByteBuffer.allocate(136);
+
+        sendBBuffer.order(ByteOrder.LITTLE_ENDIAN);
+
+        sendBBuffer.putInt(Resources.getSystem().getDisplayMetrics().heightPixels); // right
+        sendBBuffer.putInt(Resources.getSystem().getDisplayMetrics().widthPixels); // top
+        sendBBuffer.put((byte) APP_VERSION);
+        sendBBuffer.put((Build.MANUFACTURER + " " + Build.MODEL).getBytes());
+        sendBBuffer.rewind();
+        sendBBuffer.get(sendBuffer);
+
         DatagramPacket request = new DatagramPacket(new byte[1], 1);
+
+        TrafficStats.setThreadStatsTag(7270);
         while (true) {
             socket.receive(request);
 
@@ -111,20 +138,7 @@ public class MainActivity extends AppCompatActivity {
             cAddress = request.getAddress();
             cPort = request.getPort();
 
-            tbuf = ByteBuffer.allocate(136);
-            tbuf.order(ByteOrder.LITTLE_ENDIAN);
-
-            tbuf.putInt(Resources.getSystem().getDisplayMetrics().heightPixels); // right
-            tbuf.putInt(Resources.getSystem().getDisplayMetrics().widthPixels); // top
-            tbuf.put((byte) APP_VERSION);
-            tbuf.put((Build.MANUFACTURER + " " + Build.MODEL).getBytes());
-            tbuf.rewind();
-            tbuf.get(buffer);
-
-            tbuf = ByteBuffer.allocate(1 + (MAX_TOUCHES * 8));
-            tbuf.order(ByteOrder.LITTLE_ENDIAN);
-
-            DatagramPacket response = new DatagramPacket(buffer, buffer.length, cAddress, cPort);
+            DatagramPacket response = new DatagramPacket(sendBuffer, sendBuffer.length, cAddress, cPort);
             try {
                 socket.send(response);
             } catch (IOException ioException) {
@@ -161,38 +175,57 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private static boolean isTetheringActive(){
-        try {
-            for (Enumeration<NetworkInterface> en = NetworkInterface.getNetworkInterfaces(); en.hasMoreElements(); ) {
-                NetworkInterface intf = en.nextElement();
-                for (Enumeration<InetAddress> enumIpAddr = intf.getInetAddresses(); enumIpAddr.hasMoreElements(); ) {
-                    InetAddress inetAddress = enumIpAddr.nextElement();
-                    if (!intf.isLoopback()) {
-                        if (intf.getName().contains("rndis")) {
-                            return true;
-                        }
-                    }
-                }
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-        return false;
-    }
-
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        if (BuildConfig.DEBUG) {
+            StrictMode.setVmPolicy(new StrictMode.VmPolicy.Builder()
+                    .detectAll()
+                    .penaltyLog()
+                    .penaltyDeath()
+                    .build());
+        }
         super.onCreate(savedInstanceState);
 
-        byte[] pbuffer = new byte[1 + (MAX_TOUCHES * 8)];
-        ByteBuffer pbuf = ByteBuffer.allocate(1 + (MAX_TOUCHES * 8));
+        byte[] pingBuffer = new byte[1];
+        ByteBuffer pingBBuffer = ByteBuffer.allocate(1);
         ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
 
+        touchBBuffer.order(ByteOrder.LITTLE_ENDIAN);
+        pingBBuffer.order(ByteOrder.LITTLE_ENDIAN);
+        pingBBuffer.put((byte) -1); // length
+        pingBBuffer.rewind();
+        pingBBuffer.get(pingBuffer);
+
         try {
+            TrafficStats.setThreadStatsTag(7270);
             socket = new DatagramSocket(7270);
+            socket.setReceiveBufferSize(1);
+            socket.setSendBufferSize(1);
         } catch (SocketException e) {
             e.printStackTrace();
         }
+
+        // the app runs fullscreen and pinned so this shouldnt be a problem
+        setThreadPriority(THREAD_PRIORITY_URGENT_DISPLAY);
+
+        // set activity settings
+        requestWindowFeature(Window.FEATURE_NO_TITLE);
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        setContentView(R.layout.activity_main);
+        Objects.requireNonNull(getSupportActionBar()).hide();
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT)
+            getWindow().getDecorView().setSystemUiVisibility(
+                    View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
+                            View.SYSTEM_UI_FLAG_FULLSCREEN |
+                            View.SYSTEM_UI_FLAG_LAYOUT_STABLE |
+                            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+
+        // load bg image
+        sharedPref = this.getPreferences(Context.MODE_PRIVATE);
+        byte[] ibytes = Base64.decode(sharedPref.getString("bg", "").getBytes(), Base64.DEFAULT);
+        ((ImageView) findViewById(R.id.imageView)).setImageBitmap(BitmapFactory.decodeByteArray(ibytes, 0, ibytes.length));
 
         if (!isTetheringActive()) {
             AlertDialog.Builder msg = new AlertDialog.Builder(this);
@@ -212,70 +245,51 @@ public class MainActivity extends AppCompatActivity {
         }
 
         if (isTetheringActive()) {
-            Thread thread = new Thread(() -> {
+            Thread serverThread = new Thread(() -> {
+                setThreadPriority(THREAD_PRIORITY_LOWEST);
                 try {
                     serverLoop();
                 } catch (IOException e) {
                     e.printStackTrace();
                 }
             });
-            Thread thread2 = new Thread(() -> {
+            Thread touchThread = new Thread(() -> {
+                setThreadPriority(-19);
                 while (true) {
-                    synchronized (buffer) {
+                    synchronized (touchBuffer) {
                         try {
-                            buffer.wait();
-                            DatagramPacket response = new DatagramPacket(buffer, buffer.length, cAddress, cPort);
+                            touchBuffer.wait();
+                            sending = true;
+                            DatagramPacket response = new DatagramPacket(touchBuffer, touchBuffer.length, cAddress, cPort);
                             socket.send(response);
+                            sending = false;
                         } catch (IOException | InterruptedException e) {
                             e.printStackTrace();
                         }
                     }
                 }
             });
-            Runnable pinger = () -> {
-                if (cAddress == null) return;
-
-                DatagramPacket response = new DatagramPacket(pbuffer, pbuffer.length, cAddress, cPort);
-                try {
-                    socket.send(response);
-                } catch (IOException ioException) {
-                    ioException.printStackTrace();
+            Thread pingThread = new Thread(() -> {
+                setThreadPriority(THREAD_PRIORITY_LOWEST);
+                while (true) {
+                    if (cAddress == null) continue;
+                    DatagramPacket response = new DatagramPacket(pingBuffer, pingBuffer.length, cAddress, cPort);
+                    try {
+                        socket.send(response);
+                    } catch (IOException ioException) {
+                        ioException.printStackTrace();
+                    }
+                    try {
+                        Thread.sleep(5000);
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
                 }
-            };
+            });
 
-            wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
-            perfLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "MouseToVjoyLockPerf");
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
-                latencyLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_LOW_LATENCY, "MouseToVjoyLockLatency");
-
-            requestWindowFeature(Window.FEATURE_NO_TITLE);
-            getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
-            getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-            setContentView(R.layout.activity_main);
-            Objects.requireNonNull(getSupportActionBar()).hide();
-
-            sharedPref = this.getPreferences(Context.MODE_PRIVATE);
-            byte[] ibytes = Base64.decode(sharedPref.getString("bg", "").getBytes(), Base64.DEFAULT);
-
-            ((ImageView) findViewById(R.id.imageView)).setImageBitmap(BitmapFactory.decodeByteArray(ibytes, 0, ibytes.length));
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT)
-                getWindow().getDecorView().setSystemUiVisibility(
-                        View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
-                                View.SYSTEM_UI_FLAG_FULLSCREEN |
-                                View.SYSTEM_UI_FLAG_LAYOUT_STABLE |
-                                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
-
-            thread.start();
-            thread2.start();
-
-            pbuf.order(ByteOrder.LITTLE_ENDIAN);
-            pbuf.put((byte) -1); // length
-            pbuf.rewind();
-            pbuf.get(pbuffer);
-
-            scheduler.scheduleAtFixedRate(pinger, 5, 5, TimeUnit.SECONDS);
+            serverThread.start();
+            touchThread.start();
+            pingThread.start();
         }
 
     }
@@ -283,11 +297,7 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
-
-        if (perfLock.isHeld())
-            perfLock.release();
-        if (latencyLock.isHeld())
-            latencyLock.release();
+        socket.close();
     }
 
     private void sendTouch(MotionEvent e) {
@@ -300,12 +310,12 @@ public class MainActivity extends AppCompatActivity {
                 PointF f = new PointF();
                 f.x = e.getX(actionIndex);
                 f.y = e.getY(actionIndex);
-                pointers.put(pointerId, f);
+                touchPointers.put(pointerId, f);
                 break;
             }
             case MotionEvent.ACTION_MOVE: {
                 for (int size = e.getPointerCount(), i = 0; i < size; i++) {
-                    PointF point = pointers.get(e.getPointerId(i));
+                    PointF point = touchPointers.get(e.getPointerId(i));
                     if (point != null) {
                         point.x = e.getX(i);
                         point.y = e.getY(i);
@@ -316,22 +326,24 @@ public class MainActivity extends AppCompatActivity {
             case MotionEvent.ACTION_UP:
             case MotionEvent.ACTION_POINTER_UP:
             case MotionEvent.ACTION_CANCEL: {
-                pointers.remove(pointerId);
+                touchPointers.remove(pointerId);
                 break;
             }
         }
 
-        tbuf.position(0);
-        tbuf.put((byte) pointers.size());
-        for (int i = 0; i < min(pointers.size(), 10); i++) {
-            tbuf.putFloat(pointers.valueAt(i).x);
-            tbuf.putFloat(pointers.valueAt(i).y);
+        touchBBuffer.position(0);
+        touchBBuffer.put((byte) touchPointers.size());
+        for (int i = 0; i < min(touchPointers.size(), 10); i++) {
+            touchBBuffer.putFloat(touchPointers.valueAt(i).x);
+            touchBBuffer.putFloat(touchPointers.valueAt(i).y);
         }
-        tbuf.rewind();
-        tbuf.get(buffer);
+        touchBBuffer.rewind();
+        touchBBuffer.get(touchBuffer);
 
-        synchronized (buffer) {
-            buffer.notifyAll();
+        if (!sending) {
+            synchronized (touchBuffer) {
+                touchBuffer.notifyAll();
+            }
         }
     }
     @Override
@@ -381,14 +393,14 @@ public class MainActivity extends AppCompatActivity {
             }
         }
         if (btn > 0 && cAddress != null) {
-            tbuf.position(0);
-            tbuf.put((byte) -2);
-            tbuf.putFloat(btn);
-            tbuf.rewind();
-            tbuf.get(buffer);
+            touchBBuffer.position(0);
+            touchBBuffer.put((byte) -2);
+            touchBBuffer.putFloat(btn);
+            touchBBuffer.rewind();
+            touchBBuffer.get(touchBuffer);
 
-            synchronized (buffer) {
-                buffer.notifyAll();
+            synchronized (touchBuffer) {
+                touchBuffer.notifyAll();
             }
             return true;
         }
